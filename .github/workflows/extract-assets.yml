@@ -1,0 +1,65 @@
+name: Extract Unity assets
+
+on:
+  push:
+    paths:
+      - "**/*.ab"
+  workflow_dispatch: # manual run: processes every .ab in the repo
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install UnityPy Pillow
+
+      - name: Detect changed .ab files
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            BEFORE="${{ github.event.before }}"
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              FILES=$(git ls-files '*.ab')
+            else
+              FILES=$(git diff --name-only --diff-filter=AM "$BEFORE" "${{ github.sha }}" -- '*.ab')
+            fi
+          else
+            FILES=$(git ls-files '*.ab')
+          fi
+          echo "Detected:"; echo "$FILES"
+          {
+            echo "files<<EOF"
+            echo "$FILES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Extract assets
+        if: steps.detect.outputs.files != ''
+        env:
+          AB_FILES: ${{ steps.detect.outputs.files }}
+        run: |
+          mapfile -t FILES <<< "$AB_FILES"
+          python extract_assets.py "${FILES[@]}"
+
+      - name: Commit extracted assets
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add extracted
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit."
+          else
+            git commit -m "Extract assets from .ab files [skip ci]"
+            git push
+          fi
